@@ -3,6 +3,9 @@
 
 #include <compare>
 
+///
+/// A simple Dual class containing a value and a derivative.
+///
 template <typename T>
 class Dual {
 
