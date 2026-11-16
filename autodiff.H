@@ -8,22 +8,56 @@
 
 namespace dual {
 
-    ///
-    /// A simple Dual class containing a value and a derivative.
-    ///
+    /// Derivatives with respect to two independent variables, without arrays.
     template <typename T>
+    struct DerivativePair {
+
+        T d1{};
+        T d2{};
+
+        friend bool operator== (const DerivativePair&, const DerivativePair&) = default;
+
+        friend DerivativePair operator+ (const DerivativePair& a, const DerivativePair& b) {
+            return {a.d1 + b.d1, a.d2 + b.d2};
+        }
+
+        friend DerivativePair operator- (const DerivativePair& a, const DerivativePair& b) {
+            return {a.d1 - b.d1, a.d2 - b.d2};
+        }
+
+        DerivativePair operator- () const {return {-d1, -d2};}
+
+        friend DerivativePair operator* (const DerivativePair& a, T scale) {
+            return {a.d1 * scale, a.d2 * scale};
+        }
+
+        friend DerivativePair operator* (T scale, const DerivativePair& a) {
+            return a * scale;
+        }
+
+        friend DerivativePair operator/ (const DerivativePair& a, T scale) {
+            return {a.d1 / scale, a.d2 / scale};
+        }
+
+    };
+
+    ///
+    /// A scalar value and a derivative seed (a scalar or DerivativePair).
+    ///
+    template <typename T, typename D = T>
     class Dual {
 
     public:
 
         T value{};
-        T deriv{};
+        D deriv{};
 
-        Dual (T _value, T _deriv=T{})
+        Dual (T _value, D _deriv=D{})
           : value{_value}, deriv{_deriv} {}
 
-        void seed() {
-            deriv = 1.0;
+        // For a pair, the default seed selects d1; pass {0, 1} for d2.
+        void seed(D derivative=D{1}) {
+            deriv = derivative;
         }
 
         // note, since our constructor is not explicit, these operators
@@ -64,13 +98,41 @@ namespace dual {
 
     };
 
+    template <typename T, typename D>
+    Dual<T, D> constant_like (const Dual<T, D>&, std::type_identity_t<T> value) {
+        return {value, D{}};
+    }
+
+    // Ties select the first operand. Scalar bounds convert to zero-seeded Duals.
+    template <typename T, typename D>
+    Dual<T, D> min (const Dual<T, D>& a, const std::type_identity_t<Dual<T, D>>& b) {
+        return b.value < a.value ? b : a;
+    }
+
+    template <typename U, typename T, typename D>
+        requires std::is_arithmetic_v<U>
+    Dual<T, D> min (U a, const Dual<T, D>& b) {
+        return min(Dual<T, D>(static_cast<T>(a)), b);
+    }
+
+    template <typename T, typename D>
+    Dual<T, D> max (const Dual<T, D>& a, const std::type_identity_t<Dual<T, D>>& b) {
+        return b.value > a.value ? b : a;
+    }
+
+    template <typename U, typename T, typename D>
+        requires std::is_arithmetic_v<U>
+    Dual<T, D> max (U a, const Dual<T, D>& b) {
+        return max(Dual<T, D>(static_cast<T>(a)), b);
+    }
+
     // A constant exponent does not need the logarithm used for a Dual exponent.
-    template <typename T, typename U>
+    template <typename T, typename D, typename U>
         requires (std::is_floating_point_v<U> || std::is_integral_v<U>)
-    Dual<T> pow (const Dual<T>& x, U y) {
+    Dual<T, D> pow (const Dual<T, D>& x, U y) {
 
         if (y == U{0}) {
-            return {T{1}, T{0}};
+            return {T{1}, D{}};
         }
         if (y == U{1}) {
             return x;
@@ -80,16 +142,16 @@ namespace dual {
         using Exponent = std::conditional_t<std::is_integral_v<U>, long double, U>;
         auto exponent = static_cast<Exponent>(y);
         T value = std::pow(x.value, exponent);
-        T deriv = exponent * std::pow(x.value, exponent - Exponent{1}) * x.deriv;
+        D deriv = exponent * std::pow(x.value, exponent - Exponent{1}) * x.deriv;
         return {value, deriv};
 
     }
 
-    // Deduce T from x, allowing convertible exponents as well as Dual<T>.
-    template <typename T>
-    Dual<T> pow (const Dual<T>& x, const std::type_identity_t<Dual<T>>& y) {
+    // Deduce T from x, allowing convertible exponents as well as Dual<T, D>.
+    template <typename T, typename D>
+    Dual<T, D> pow (const Dual<T, D>& x, const std::type_identity_t<Dual<T, D>>& y) {
 
-        if (y.deriv == T{}) {
+        if (y.deriv == D{}) {
             return pow(x, y.value);
         }
 
@@ -107,14 +169,14 @@ namespace dual {
         }
 
         T value = std::pow(x.value, y.value);
-        T deriv = value * (y.deriv * std::log(x.value) +
+        D deriv = value * (y.deriv * std::log(x.value) +
                            y.value * x.deriv / x.value);
         return {value, deriv};
 
     }
 
-    template <typename T>
-    Dual<T> abs (const Dual<T>& x) {
+    template <typename T, typename D>
+    Dual<T, D> abs (const Dual<T, D>& x) {
         if (std::isnan(x.value)) {
             return x;
         }
@@ -123,51 +185,51 @@ namespace dual {
         } else if (x.value > T{}) {
             return x;
         }
-        return {T{}, T{}};
+        return {T{}, D{}};
     }
 
-    template <typename T>
-    Dual<T> exp (const Dual<T>& x) {
+    template <typename T, typename D>
+    Dual<T, D> exp (const Dual<T, D>& x) {
         auto value = std::exp(x.value);
         return {value, value * x.deriv};
     }
 
-    template <typename T>
-    Dual<T> log (const Dual<T>& x) {
+    template <typename T, typename D>
+    Dual<T, D> log (const Dual<T, D>& x) {
         auto value = std::log(x.value);
         return {value, x.deriv / x.value};
     }
 
-    template <typename T>
-    Dual<T> log1p (const Dual<T>& x) {
+    template <typename T, typename D>
+    Dual<T, D> log1p (const Dual<T, D>& x) {
         auto value = std::log1p(x.value);
         return {value, x.deriv / (T{1} + x.value)};
     }
 
-    template <typename T>
-    Dual<T> sqrt (const Dual<T>& x) {
+    template <typename T, typename D>
+    Dual<T, D> sqrt (const Dual<T, D>& x) {
         auto value = std::sqrt(x.value);
         return {value, T{0.5} * x.deriv / value};
     }
 
-    template <typename T>
-    Dual<T> cbrt (const Dual<T>& x) {
+    template <typename T, typename D>
+    Dual<T, D> cbrt (const Dual<T, D>& x) {
         auto value = std::cbrt(x.value);
         return {value, (T{1} / T{3}) * x.deriv / (value * value)};
     }
 
-    template <typename T>
-    Dual<T> cos (const Dual<T>& x) {
+    template <typename T, typename D>
+    Dual<T, D> cos (const Dual<T, D>& x) {
         return {std::cos(x.value), -std::sin(x.value) * x.deriv};
     }
 
-    template <typename T>
-    Dual<T> sin (const Dual<T>& x) {
+    template <typename T, typename D>
+    Dual<T, D> sin (const Dual<T, D>& x) {
         return {std::sin(x.value), std::cos(x.value) * x.deriv};
     }
 
-    template <typename T>
-    Dual<T> atan (const Dual<T>& x) {
+    template <typename T, typename D>
+    Dual<T, D> atan (const Dual<T, D>& x) {
         return {std::atan(x.value), x.deriv / (T{1} + x.value * x.value)};
     }
 
